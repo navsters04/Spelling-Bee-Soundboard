@@ -5,6 +5,7 @@ import sys
 import threading
 import time
 import glob
+import math
 
 class SoundBoard:
     def __init__(self, root):
@@ -43,6 +44,14 @@ class SoundBoard:
 
         self.toggle_labels = ['P', 'A', 'Z'] * 3
 
+        # === TIMER STATE ===
+        self.timer_running = False
+        self.timer_seconds = 0
+        self.timer_total = 0
+        self.timer_thread = None
+        self.timer_stop_event = threading.Event()
+        self.timer_window_visible = True
+
         # Build UI
         self.create_ui()
 
@@ -53,6 +62,198 @@ class SoundBoard:
         self.root.bind('<W>', lambda e: self.play_wrong())
         self.root.bind('<F11>', lambda e: self.toggle_fullscreen())
         self.root.bind('<Escape>', lambda e: self.root.attributes('-fullscreen', False))
+
+        # Open timer display window
+        self.open_timer_window()
+
+        # Handle main window close
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def open_timer_window(self):
+        """Open the second window that shows only the timer"""
+        self.timer_window = tk.Toplevel(self.root)
+        self.timer_window.title("Timer Display")
+        self.timer_window.geometry("500x500")          # Changed from 500x250
+        self.timer_window.configure(bg="#0a0a1a")
+        self.timer_window.overrideredirect(True)
+        self.timer_window.attributes('-topmost', True)
+
+        # Center on screen
+        screen_w = self.timer_window.winfo_screenwidth()
+        screen_h = self.timer_window.winfo_screenheight()
+        x = (screen_w - 500) // 2
+        y = (screen_h - 500) // 2
+        self.timer_window.geometry(f"500x500+{x}+{y}")
+
+        # Draggable
+        self.timer_window.bind('<Button-1>', self.start_drag)
+        self.timer_window.bind('<B1-Motion>', self.on_drag)
+
+        # NEW: Timer window hotkeys (independent fullscreen)
+        self.timer_window.bind('<F11>', lambda e: self.toggle_timer_fullscreen())
+        self.timer_window.bind('<Escape>', lambda e: self.exit_timer_fullscreen())
+        self.timer_window.bind('<Button-3>', self.show_timer_menu)
+
+        # NEW: Canvas for circular progress
+        self.timer_canvas = tk.Canvas(
+            self.timer_window,
+            width=500, height=500,
+            bg="#0a0a1a",
+            highlightthickness=0
+        )
+        self.timer_canvas.pack(fill=tk.BOTH, expand=True)
+
+        # Ring geometry
+        self.center_x = 250
+        self.center_y = 250
+        self.radius = 180
+        self.ring_width = 15
+
+        # Background ring (dark gray)
+        self.bg_ring = self.timer_canvas.create_oval(
+            self.center_x - self.radius, self.center_y - self.radius,
+            self.center_x + self.radius, self.center_y + self.radius,
+            outline="#1a1a3a", width=self.ring_width
+        )
+
+        # Progress ring (colored arc)
+        self.progress_ring = self.timer_canvas.create_arc(
+            self.center_x - self.radius, self.center_y - self.radius,
+            self.center_x + self.radius, self.center_y + self.radius,
+            start=90, extent=0,
+            outline="#00ff88", width=self.ring_width,
+            style="arc"
+        )
+
+        # Timer text (centered on canvas)
+        self.timer_display = self.timer_canvas.create_text(
+            self.center_x, self.center_y,
+            text="00:00",
+            font=('Segoe UI', 72, 'bold'),
+            fill="#00ff88",
+            anchor="center"
+        )
+
+        # Close button
+        close_btn = tk.Button(
+            self.timer_window,
+            text="✕",
+            font=('Segoe UI', 10),
+            bg="#0a0a1a",
+            fg="#666",
+            relief=tk.FLAT,
+            cursor="hand2",
+            command=self.hide_timer_window        # Changed to hide instead of destroy
+        )
+        close_btn.place(x=470, y=5)
+
+    def hide_timer_window(self):
+        """Hide the timer window from controller button"""
+        self.timer_window.withdraw()
+        self.timer_window_visible = False
+        self.toggle_timer_btn.config(text="👁 SHOW TIMER")
+
+    def show_timer_window(self):
+        """Show the timer window from controller button"""
+        self.timer_window.deiconify()
+        self.timer_window_visible = True
+        self.toggle_timer_btn.config(text="🙈 HIDE TIMER")
+
+    def toggle_timer_visibility(self):
+        """Toggle timer window show/hide from controller"""
+        if self.timer_window_visible:
+            self.hide_timer_window()
+        else:
+            self.show_timer_window()
+
+    def toggle_timer_fullscreen(self):
+        is_full = self.timer_window.attributes('-fullscreen')
+        if not is_full:
+            self.timer_window.overrideredirect(False)
+            self.timer_window.update_idletasks()
+            self.timer_window.attributes('-fullscreen', True)
+            self.resize_timer_canvas()
+        else:
+            self.timer_window.attributes('-fullscreen', False)
+            self.timer_window.update_idletasks()
+            self.timer_window.overrideredirect(True)
+            self.timer_window.geometry("500x500")
+            self.resize_timer_canvas()
+
+    def exit_timer_fullscreen(self):
+        """Exit fullscreen mode"""
+        self.timer_window.attributes('-fullscreen', False)
+        self.timer_window.update_idletasks()
+        self.timer_window.overrideredirect(True)
+        self.resize_timer_canvas()
+
+    def resize_timer_canvas(self):
+        """Resize canvas elements when window size changes"""
+        self.timer_window.update_idletasks()
+        w = self.timer_window.winfo_width()
+        h = self.timer_window.winfo_height()
+        
+        self.timer_canvas.config(width=w, height=h)
+        
+        # Recalculate center and radius
+        self.center_x = w // 2
+        self.center_y = h // 2
+        self.radius = min(w, h) // 2 - 40
+        
+        # Update ring positions
+        self.timer_canvas.coords(
+            self.bg_ring,
+            self.center_x - self.radius, self.center_y - self.radius,
+            self.center_x + self.radius, self.center_y + self.radius
+        )
+        self.timer_canvas.coords(
+            self.progress_ring,
+            self.center_x - self.radius, self.center_y - self.radius,
+            self.center_x + self.radius, self.center_y + self.radius
+        )
+        
+        # Update text position
+        self.timer_canvas.coords(self.timer_display, self.center_x, self.center_y)
+        
+        # Update font size based on window size
+        font_size = max(48, min(w, h) // 6)
+        self.timer_canvas.itemconfig(self.timer_display, font=('Segoe UI', font_size, 'bold'))
+        
+        # Redraw progress
+        self._update_ring()
+
+    def start_drag(self, event):
+        self.drag_x = event.x
+        self.drag_y = event.y
+
+    def on_drag(self, event):
+        x = self.timer_window.winfo_x() + event.x - self.drag_x
+        y = self.timer_window.winfo_y() + event.y - self.drag_y
+        self.timer_window.geometry(f"+{x}+{y}")
+
+    def show_timer_menu(self, event):
+        menu = tk.Menu(self.timer_window, tearoff=0, bg="#1a1a2e", fg="#f0f0f0")
+        menu.add_command(label="Toggle Fullscreen (F11)", command=self.toggle_timer_fullscreen)  # NEW
+        menu.add_command(label="Show Window Borders", command=self.toggle_timer_borders)
+        menu.add_command(label="Change Color...", command=self.change_timer_color)
+        menu.add_separator()
+        menu.add_command(label="Hide Timer Window", command=self.hide_timer_window)  # Changed from "Close"
+        menu.post(event.x_root, event.y_root)
+
+    def toggle_timer_borders(self):
+        current = self.timer_window.overrideredirect()
+        self.timer_window.overrideredirect(not current)
+
+    def change_timer_color(self):
+        colors = ["#00ff88", "#ff6b6b", "#4ecdc4", "#ffe66d", "#ffffff", "#ff9f43"]
+        current = self.timer_canvas.itemcget(self.timer_display, "fill")  # Changed from .cget()
+        try:
+            idx = colors.index(current)
+            next_color = colors[(idx + 1) % len(colors)]
+        except ValueError:
+            next_color = colors[0]
+        self.timer_canvas.itemconfig(self.timer_display, fill=next_color)           # Changed
+        self.timer_canvas.itemconfig(self.progress_ring, outline=next_color)        # NEW
 
     def check_buzzer_files(self):
         missing = []
@@ -89,6 +290,64 @@ class SoundBoard:
         subtitle = tk.Label(self.root, text="Sound Board", font=('Segoe UI', 12),
                            bg="#1a1a2e", fg="#8888aa")
         subtitle.pack(pady=(0, 10))
+
+         # === TIMER SECTION ===
+        timer_frame = tk.Frame(self.root, bg="#1a1a2e")
+        timer_frame.pack(fill=tk.X, padx=30, pady=(0, 10))
+
+        tk.Label(timer_frame, text="⏱ TIMER", font=('Segoe UI', 14, 'bold'),
+                bg="#1a1a2e", fg="#89b4fa").pack(side=tk.LEFT)
+
+        # Timer input
+        input_frame = tk.Frame(timer_frame, bg="#1a1a2e")
+        input_frame.pack(side=tk.LEFT, padx=(15, 0))
+
+        self.min_entry = tk.Entry(input_frame, width=4, font=('Segoe UI', 14),
+                                  bg="#313244", fg="#f0f0f0", relief=tk.FLAT,
+                                  justify=tk.CENTER, insertbackground="#f0f0f0")
+        self.min_entry.insert(0, "2")
+        self.min_entry.pack(side=tk.LEFT)
+
+        tk.Label(input_frame, text=":", font=('Segoe UI', 14),
+                bg="#1a1a2e", fg="#f0f0f0").pack(side=tk.LEFT, padx=2)
+
+        self.sec_entry = tk.Entry(input_frame, width=4, font=('Segoe UI', 14),
+                                  bg="#313244", fg="#f0f0f0", relief=tk.FLAT,
+                                  justify=tk.CENTER, insertbackground="#f0f0f0")
+        self.sec_entry.insert(0, "00")
+        self.sec_entry.pack(side=tk.LEFT)
+
+        # Timer control buttons
+        ctrl_frame = tk.Frame(timer_frame, bg="#1a1a2e")
+        ctrl_frame.pack(side=tk.RIGHT)
+
+        self.start_btn = tk.Button(ctrl_frame, text="▶ START", font=('Segoe UI', 11, 'bold'),
+                                   bg="#10b981", fg="white", relief=tk.FLAT,
+                                   padx=15, pady=5, cursor="hand2",
+                                   command=self.start_timer)
+        self.start_btn.pack(side=tk.LEFT, padx=3)
+
+        self.stop_btn = tk.Button(ctrl_frame, text="⏹ STOP", font=('Segoe UI', 11, 'bold'),
+                                  bg="#ef4444", fg="white", relief=tk.FLAT,
+                                  padx=15, pady=5, cursor="hand2",
+                                  command=self.stop_timer, state=tk.DISABLED)
+        self.stop_btn.pack(side=tk.LEFT, padx=3)
+
+        self.reset_btn = tk.Button(ctrl_frame, text="↺ RESET", font=('Segoe UI', 11, 'bold'),
+                                   bg="#3b82f6", fg="white", relief=tk.FLAT,
+                                   padx=15, pady=5, cursor="hand2",
+                                   command=self.reset_timer)
+        self.reset_btn.pack(side=tk.LEFT, padx=3)
+
+        self.toggle_timer_btn = tk.Button(ctrl_frame, text="HIDE TIMER", font=('Segoe UI', 11, 'bold'),
+                                          bg="#7c3aed", fg="white", relief=tk.FLAT,
+                                          padx=15, pady=5, cursor="hand2",
+                                          command=self.toggle_timer_visibility)
+        self.toggle_timer_btn.pack(side=tk.LEFT, padx=3)
+
+        # Separator
+        sep = tk.Frame(self.root, bg="#313244", height=2)
+        sep.pack(fill=tk.X, padx=20, pady=5)
 
         # === BUZZER BUTTONS ===
         btn_frame = tk.Frame(self.root, bg="#1a1a2e")
@@ -166,18 +425,133 @@ class SoundBoard:
 
         # Status bar
         self.status = tk.Label(self.root, text="Ready", font=('Segoe UI', 10),
-                              bg="#181825", fg="#444466")
-        self.status.pack(fill=tk.X, side=tk.BOTTOM, pady=(10, 0), ipady=8)
+                            bg="#1a1a2e", fg="#6b7280")
+        self.status.pack(pady=(5, 0))
 
         # Hint at bottom
         hint = tk.Label(self.root, text="Press 'C' for Correct  |  Press 'W' for Wrong  |  F11 = Fullscreen",
                        font=('Segoe UI', 9), bg="#1a1a2e", fg="#555577")
         hint.pack(pady=(5, 0))
 
+    # === TIMER METHODS ===
+    def start_timer(self):
+        if self.timer_running:
+            return
+
+        try:
+            mins = int(self.min_entry.get() or 0)
+            secs = int(self.sec_entry.get() or 0)
+        except ValueError:
+            self.status.config(text="Invalid time format", fg="#ef4444")
+            return
+
+        self.timer_total = mins * 60 + secs
+        if self.timer_total <= 0:
+            self.status.config(text="Please set a time > 0", fg="#ef4444")
+            return
+
+        self.timer_seconds = self.timer_total
+        self.timer_running = True
+        self.timer_stop_event.clear()
+
+        self.start_btn.config(state=tk.DISABLED)
+        self.stop_btn.config(state=tk.NORMAL)
+        self.min_entry.config(state=tk.DISABLED)
+        self.sec_entry.config(state=tk.DISABLED)
+
+        self.status.config(text="Timer running...", fg="#10b981")
+
+        self.timer_thread = threading.Thread(target=self._timer_loop, daemon=True)
+        self.timer_thread.start()
+
+    def _timer_loop(self):
+        while self.timer_seconds > 0 and not self.timer_stop_event.is_set():
+            self._update_display()
+            time.sleep(1)
+            self.timer_seconds -= 1
+
+        if not self.timer_stop_event.is_set():
+            self._update_display()
+            self.timer_finished()
+
+    def _update_display(self):
+        mins, secs = divmod(self.timer_seconds, 60)
+        time_str = f"{mins:02d}:{secs:02d}"
+
+        # OLD: self.timer_display.config(text=time_str)
+        # NEW: Canvas itemconfig
+        self.root.after(0, lambda: self.timer_canvas.itemconfig(self.timer_display, text=time_str))
+
+        # NEW: Update circular ring
+        self.root.after(0, self._update_ring)
+
+        # Color changes — now using itemconfig for canvas
+        if self.timer_seconds <= 10:
+            self.root.after(0, lambda: self.timer_canvas.itemconfig(self.timer_display, fill="#ef4444"))
+            self.root.after(0, lambda: self.timer_canvas.itemconfig(self.progress_ring, outline="#ef4444"))
+        elif self.timer_seconds <= 30:
+            self.root.after(0, lambda: self.timer_canvas.itemconfig(self.timer_display, fill="#d4a017"))
+            self.root.after(0, lambda: self.timer_canvas.itemconfig(self.progress_ring, outline="#d4a017"))
+
+    def _update_ring(self):
+        """Update the circular progress ring based on remaining time"""
+        if self.timer_total > 0:
+            progress = (self.timer_total - self.timer_seconds) / self.timer_total
+        else:
+            progress = 0
+        
+        # Arc goes from 90 degrees (top) clockwise
+        extent = progress * 360
+        self.timer_canvas.itemconfig(self.progress_ring, extent=extent)
+
+    def timer_finished(self):
+        self.timer_running = False
+        self.root.after(0, self._reset_ui_state)
+        self.root.after(0, lambda: self.status.config(text="TIME'S UP!", fg="#ef4444"))
+        
+        # OLD: self.timer_display.config(text="00:00", fg="#ef4444")
+        # NEW:
+        self.root.after(0, lambda: self.timer_canvas.itemconfig(self.timer_display, text="00:00", fill="#ef4444"))
+        self.root.after(0, lambda: self.timer_canvas.itemconfig(self.progress_ring, outline="#ef4444", extent=360))
+        
+        self.root.after(0, self.play_wrong)
+
+    def stop_timer(self):
+        if not self.timer_running:
+            return
+        self.timer_stop_event.set()
+        self.timer_running = False
+        self._reset_ui_state()
+        self.status.config(text="Timer stopped", fg="#d4a017")
+
+    def reset_timer(self):
+        if self.timer_running:
+            self.timer_stop_event.set()
+            self.timer_running = False
+            if self.timer_thread:
+                self.timer_thread.join(timeout=0.5)
+
+        self.timer_seconds = 0
+        self.timer_total = 0
+        self._reset_ui_state()
+        
+        # OLD: self.timer_display.config(text="00:00", fg="#00ff88")
+        # NEW:
+        self.timer_canvas.itemconfig(self.timer_display, text="00:00", fill="#00ff88")
+        self.timer_canvas.itemconfig(self.progress_ring, outline="#00ff88", extent=0)
+        
+        self.status.config(text="Timer reset", fg="#6b7280")
+
+    def _reset_ui_state(self):
+        self.start_btn.config(state=tk.NORMAL)
+        self.stop_btn.config(state=tk.DISABLED)
+        self.min_entry.config(state=tk.NORMAL)
+        self.sec_entry.config(state=tk.NORMAL)
+
     def render_word_buttons(self):
         """Create buttons for each word audio file"""
         if not self.word_files:
-            empty_msg = tk.Label(self.scrollable_frame, text="Put MP3 files in a 'words' folder\nnext to this .exe",
+            empty_msg = tk.Label(self.scrollable_frame, text="Put WAV files in a 'words' folder\nnext to this .exe",
                                 font=('Segoe UI', 12), bg="#1a1a2e", fg="#6b7280",
                                 justify=tk.CENTER)
             empty_msg.pack(pady=40)
@@ -294,6 +668,14 @@ class SoundBoard:
 
     def on_mousewheel(self, event):
         self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+
+    def on_close(self):
+        """Clean up on window close"""
+        if self.timer_running:
+            self.timer_stop_event.set()
+        if hasattr(self, 'timer_window') and self.timer_window.winfo_exists():
+            self.timer_window.destroy()
+        self.root.destroy()
 
 def main():
     root = tk.Tk()
