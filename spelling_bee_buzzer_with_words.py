@@ -6,6 +6,8 @@ import threading
 import time
 import glob
 import math
+import ctypes
+from ctypes import wintypes
 
 class SoundBoard:
     def __init__(self, root):
@@ -70,10 +72,9 @@ class SoundBoard:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def open_timer_window(self):
-        """Open the second window that shows only the timer"""
         self.timer_window = tk.Toplevel(self.root)
         self.timer_window.title("Timer Display")
-        self.timer_window.geometry("500x500")          # Changed from 500x250
+        self.timer_window.geometry("500x500")       
         self.timer_window.configure(bg="#0a0a1a")
         self.timer_window.overrideredirect(True)
         self.timer_window.attributes('-topmost', True)
@@ -85,11 +86,8 @@ class SoundBoard:
         y = (screen_h - 500) // 2
         self.timer_window.geometry(f"500x500+{x}+{y}")
 
-        # Draggable
         self.timer_window.bind('<Button-1>', self.start_drag)
         self.timer_window.bind('<B1-Motion>', self.on_drag)
-
-        # NEW: Timer window hotkeys (independent fullscreen)
         self.timer_window.bind('<F11>', lambda e: self.toggle_timer_fullscreen())
         self.timer_window.bind('<Escape>', lambda e: self.exit_timer_fullscreen())
         self.timer_window.bind('<Button-3>', self.show_timer_menu)
@@ -135,7 +133,7 @@ class SoundBoard:
         )
 
         # Close button
-        close_btn = tk.Button(
+        self.close_btn = tk.Button(
             self.timer_window,
             text="✕",
             font=('Segoe UI', 10),
@@ -143,52 +141,146 @@ class SoundBoard:
             fg="#666",
             relief=tk.FLAT,
             cursor="hand2",
-            command=self.hide_timer_window        # Changed to hide instead of destroy
+            command=self.hide_timer_window
         )
-        close_btn.place(x=470, y=5)
+        self.close_btn.place(x=470, y=5)
 
     def hide_timer_window(self):
-        """Hide the timer window from controller button"""
         self.timer_window.withdraw()
         self.timer_window_visible = False
-        self.toggle_timer_btn.config(text="👁 SHOW TIMER")
+        self.toggle_timer_btn.config(text="SHOW TIMER")
 
     def show_timer_window(self):
-        """Show the timer window from controller button"""
         self.timer_window.deiconify()
         self.timer_window_visible = True
-        self.toggle_timer_btn.config(text="🙈 HIDE TIMER")
+        self.toggle_timer_btn.config(text="HIDE TIMER")
 
     def toggle_timer_visibility(self):
-        """Toggle timer window show/hide from controller"""
         if self.timer_window_visible:
             self.hide_timer_window()
         else:
             self.show_timer_window()
 
+    def get_monitor_at_position(self, x, y):
+        """Get the monitor that contains the given point using Windows API"""
+        user32 = ctypes.windll.user32
+        hMonitor = user32.MonitorFromPoint(wintypes.POINT(x, y), 2)
+        
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("rcMonitor", wintypes.RECT),
+                ("rcWork", wintypes.RECT),
+                ("dwFlags", wintypes.DWORD)
+            ]
+        
+        mi = MONITORINFO()
+        mi.cbSize = ctypes.sizeof(MONITORINFO)
+        
+        if user32.GetMonitorInfoW(hMonitor, ctypes.byref(mi)):
+            return {
+                'left': mi.rcMonitor.left,
+                'top': mi.rcMonitor.top,
+                'right': mi.rcMonitor.right,
+                'bottom': mi.rcMonitor.bottom,
+                'width': mi.rcMonitor.right - mi.rcMonitor.left,
+                'height': mi.rcMonitor.bottom - mi.rcMonitor.top
+            }
+        return None
+
     def toggle_timer_fullscreen(self):
-        is_full = self.timer_window.attributes('-fullscreen')
-        if not is_full:
+        """Toggle fullscreen - manually fills screen to work on correct monitor"""
+        # Track fullscreen state ourselves since we can't rely on -fullscreen attribute
+        if not hasattr(self, '_timer_is_fullscreen'):
+            self._timer_is_fullscreen = False
+
+        if not self._timer_is_fullscreen:
+            # Save current windowed state
+            self.timer_window.update_idletasks()
+            self._windowed_geometry = self.timer_window.geometry()
+
+            # Hide close button when going fullscreen
+            if hasattr(self, 'close_btn'):
+                self.close_btn.place_forget()
+
+            # Get current window center position
+            wx = self.timer_window.winfo_x()
+            wy = self.timer_window.winfo_y()
+            ww = self.timer_window.winfo_width()
+            wh = self.timer_window.winfo_height()
+            center_x = wx + ww // 2
+            center_y = wy + wh // 2
+
+            # Get the actual monitor this window is on
+            monitor = self.get_monitor_at_position(center_x, center_y)
+
+            if monitor:
+                mon_w = monitor['width']
+                mon_h = monitor['height']
+                mon_x = monitor['left']
+                mon_y = monitor['top']
+            else:
+                mon_w = self.timer_window.winfo_screenwidth()
+                mon_h = self.timer_window.winfo_screenheight()
+                mon_x = wx
+                mon_y = wy
+
+            # Turn off borderless, then set geometry to fill the monitor
             self.timer_window.overrideredirect(False)
             self.timer_window.update_idletasks()
-            self.timer_window.attributes('-fullscreen', True)
+
+            # Set position first, then size (order matters for multi-monitor)
+            self.timer_window.geometry(f"+{mon_x}+{mon_y}")
+            self.timer_window.update_idletasks()
+            self.timer_window.geometry(f"{mon_w}x{mon_h}+{mon_x}+{mon_y}")
+            self.timer_window.update_idletasks()
+
+            # Use Windows API to maximize properly instead of -fullscreen
+            # This respects the monitor position
+            self._maximize_window()
+
+            self._timer_is_fullscreen = True
             self.resize_timer_canvas()
         else:
-            self.timer_window.attributes('-fullscreen', False)
-            self.timer_window.update_idletasks()
+            # Show close button when exiting fullscreen
+            if hasattr(self, 'close_btn'):
+                self.close_btn.place(x=470, y=5)
+
+
+            # Restore windowed state
+            self._restore_window()
+
             self.timer_window.overrideredirect(True)
-            self.timer_window.geometry("500x500")
+            self.timer_window.update_idletasks()
+
+            if hasattr(self, '_windowed_geometry'):
+                self.timer_window.geometry(self._windowed_geometry)
+            else:
+                self.timer_window.geometry("500x500")
+
+            self._timer_is_fullscreen = False
             self.resize_timer_canvas()
 
+    def _maximize_window(self):
+        hwnd = ctypes.windll.user32.GetForegroundWindow()
+        ctypes.windll.user32.ShowWindow(hwnd, 3)   # SW_MAXIMIZE = 3
+
+    def _restore_window(self):
+        hwnd = ctypes.windll.user32.GetForegroundWindow()
+        ctypes.windll.user32.ShowWindow(hwnd, 9)   # SW_RESTORE = 9
+
+
     def exit_timer_fullscreen(self):
-        """Exit fullscreen mode"""
         self.timer_window.attributes('-fullscreen', False)
         self.timer_window.update_idletasks()
         self.timer_window.overrideredirect(True)
+        if hasattr(self, '_windowed_geometry'):
+            self.timer_window.geometry(self._windowed_geometry)
+        else:
+            self.timer_window.geometry("500x500")
         self.resize_timer_canvas()
 
     def resize_timer_canvas(self):
-        """Resize canvas elements when window size changes"""
         self.timer_window.update_idletasks()
         w = self.timer_window.winfo_width()
         h = self.timer_window.winfo_height()
@@ -233,27 +325,22 @@ class SoundBoard:
 
     def show_timer_menu(self, event):
         menu = tk.Menu(self.timer_window, tearoff=0, bg="#1a1a2e", fg="#f0f0f0")
-        menu.add_command(label="Toggle Fullscreen (F11)", command=self.toggle_timer_fullscreen)  # NEW
-        menu.add_command(label="Show Window Borders", command=self.toggle_timer_borders)
+        menu.add_command(label="Toggle Fullscreen (F11)", command=self.toggle_timer_fullscreen)
         menu.add_command(label="Change Color...", command=self.change_timer_color)
         menu.add_separator()
-        menu.add_command(label="Hide Timer Window", command=self.hide_timer_window)  # Changed from "Close"
+        menu.add_command(label="Hide Timer Window", command=self.hide_timer_window)
         menu.post(event.x_root, event.y_root)
 
-    def toggle_timer_borders(self):
-        current = self.timer_window.overrideredirect()
-        self.timer_window.overrideredirect(not current)
-
     def change_timer_color(self):
-        colors = ["#00ff88", "#ff6b6b", "#4ecdc4", "#ffe66d", "#ffffff", "#ff9f43"]
-        current = self.timer_canvas.itemcget(self.timer_display, "fill")  # Changed from .cget()
+        colors = ["#00ff88", "#ff6b6b", "#4ecdc4", "#ffe66d", "#ffffff", "#ff9f43"] 
+        current = self.timer_canvas.itemcget(self.timer_display, "fill") 
         try:
             idx = colors.index(current)
             next_color = colors[(idx + 1) % len(colors)]
         except ValueError:
             next_color = colors[0]
-        self.timer_canvas.itemconfig(self.timer_display, fill=next_color)           # Changed
-        self.timer_canvas.itemconfig(self.progress_ring, outline=next_color)        # NEW
+        self.timer_canvas.itemconfig(self.timer_display, fill=next_color)
+        self.timer_canvas.itemconfig(self.progress_ring, outline=next_color)
 
     def check_buzzer_files(self):
         missing = []
@@ -478,11 +565,7 @@ class SoundBoard:
         mins, secs = divmod(self.timer_seconds, 60)
         time_str = f"{mins:02d}:{secs:02d}"
 
-        # OLD: self.timer_display.config(text=time_str)
-        # NEW: Canvas itemconfig
         self.root.after(0, lambda: self.timer_canvas.itemconfig(self.timer_display, text=time_str))
-
-        # NEW: Update circular ring
         self.root.after(0, self._update_ring)
 
         # Color changes — now using itemconfig for canvas
@@ -500,7 +583,6 @@ class SoundBoard:
         else:
             progress = 0
         
-        # Arc goes from 90 degrees (top) clockwise
         extent = progress * 360
         self.timer_canvas.itemconfig(self.progress_ring, extent=extent)
 
@@ -509,8 +591,6 @@ class SoundBoard:
         self.root.after(0, self._reset_ui_state)
         self.root.after(0, lambda: self.status.config(text="TIME'S UP!", fg="#ef4444"))
         
-        # OLD: self.timer_display.config(text="00:00", fg="#ef4444")
-        # NEW:
         self.root.after(0, lambda: self.timer_canvas.itemconfig(self.timer_display, text="00:00", fill="#ef4444"))
         self.root.after(0, lambda: self.timer_canvas.itemconfig(self.progress_ring, outline="#ef4444", extent=360))
         
@@ -535,8 +615,6 @@ class SoundBoard:
         self.timer_total = 0
         self._reset_ui_state()
         
-        # OLD: self.timer_display.config(text="00:00", fg="#00ff88")
-        # NEW:
         self.timer_canvas.itemconfig(self.timer_display, text="00:00", fill="#00ff88")
         self.timer_canvas.itemconfig(self.progress_ring, outline="#00ff88", extent=0)
         
