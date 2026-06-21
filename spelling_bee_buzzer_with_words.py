@@ -383,12 +383,16 @@ class SoundBoard:
         self.timer_canvas.itemconfig(self.timer_display, font=('Segoe UI', font_size, 'bold'))
         
         # ===== Hearts stay on the LEFT side =====
+        is_fullscreen = getattr(self, '_timer_is_fullscreen', False)
         bar_width = left_panel_width - 50
         bar_height = max(35, h // 12)
         bar_spacing = bar_height // 2 + 15
-        start_x = 30
         start_y = self.center_y - (1.5 * bar_height + bar_spacing)
-        
+        if is_fullscreen :
+            start_x = 60
+        else:
+            start_x = 30
+
         for g in range(3):
             bar_y = start_y + g * (bar_height + bar_spacing)
             
@@ -411,7 +415,10 @@ class SoundBoard:
             
             # Update hearts position
             for h_idx in range(3):
-                heart_x = start_x + 50 + h_idx * (bar_width // 4)
+                if is_fullscreen :
+                    heart_x = start_x + 75 + h_idx * (bar_width // 4)
+                else:
+                    heart_x = start_x + 50 + h_idx * (bar_width // 4)
                 heart_y = bar_y + bar_height // 2
                 self.timer_canvas.coords(
                     self.heart_groups[g]['hearts'][h_idx],
@@ -850,8 +857,8 @@ class SoundBoard:
 
     def toggle(self, idx):
         """"Toggle individual heart on/off"""
-        group = idx % 3        # 0=P, 1=A, 2=Z
-        position = idx // 3    # 0=left, 1=middle, 2=right
+        group = idx % 3
+        position = idx // 3
         
         # Flip this specific heart
         self.heart_states[group][position] = not self.heart_states[group][position]
