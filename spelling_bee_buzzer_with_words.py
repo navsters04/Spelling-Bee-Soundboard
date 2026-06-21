@@ -46,6 +46,12 @@ class SoundBoard:
 
         self.toggle_labels = ['P', 'A', 'Z'] * 3
 
+        self.heart_states = [
+            [True, True, True],   # P group hearts [left, middle, right]
+            [True, True, True],   # A group
+            [True, True, True]    # Z group
+        ]
+
         # === TIMER STATE ===
         self.timer_running = False
         self.timer_seconds = 0
@@ -53,6 +59,7 @@ class SoundBoard:
         self.timer_thread = None
         self.timer_stop_event = threading.Event()
         self.timer_window_visible = True
+        self.num_cols = 3
 
         # Build UI
         self.create_ui()
@@ -64,6 +71,7 @@ class SoundBoard:
         self.root.bind('<W>', lambda e: self.play_wrong())
         self.root.bind('<F11>', lambda e: self.toggle_fullscreen())
         self.root.bind('<Escape>', lambda e: self.root.attributes('-fullscreen', False))
+        self.root.bind('<Map>', self._on_window_mapped)
 
         # Open timer display window
         self.open_timer_window()
@@ -74,7 +82,7 @@ class SoundBoard:
     def open_timer_window(self):
         self.timer_window = tk.Toplevel(self.root)
         self.timer_window.title("Timer Display")
-        self.timer_window.geometry("500x500")       
+        self.timer_window.geometry("650x500")       
         self.timer_window.configure(bg="#0a0a1a")
         self.timer_window.overrideredirect(True)
         self.timer_window.attributes('-topmost', True)
@@ -82,9 +90,9 @@ class SoundBoard:
         # Center on screen
         screen_w = self.timer_window.winfo_screenwidth()
         screen_h = self.timer_window.winfo_screenheight()
-        x = (screen_w - 500) // 2
+        x = (screen_w - 650) // 2
         y = (screen_h - 500) // 2
-        self.timer_window.geometry(f"500x500+{x}+{y}")
+        self.timer_window.geometry(f"650x500+{x}+{y}")
 
         self.timer_window.bind('<Button-1>', self.start_drag)
         self.timer_window.bind('<B1-Motion>', self.on_drag)
@@ -92,29 +100,36 @@ class SoundBoard:
         self.timer_window.bind('<Escape>', lambda e: self.exit_timer_fullscreen())
         self.timer_window.bind('<Button-3>', self.show_timer_menu)
 
-        # NEW: Canvas for circular progress
+        # Canvas for circular progress
         self.timer_canvas = tk.Canvas(
             self.timer_window,
-            width=500, height=500,
+            width=650, height=500,  # Match window size
             bg="#0a0a1a",
             highlightthickness=0
         )
         self.timer_canvas.pack(fill=tk.BOTH, expand=True)
 
-        # Ring geometry
-        self.center_x = 250
-        self.center_y = 250
-        self.radius = 180
+        # ===== USE SAME FORMULAS AS resize_timer_canvas() =====
+        w, h = 650, 500  # Initial window size
+        
+        # Split screen: left panel for hearts, right for timer
+        left_panel_width = min(280, w // 3)  # Same formula
+        timer_area_x = left_panel_width + (w - left_panel_width) // 2
+        
+        # Timer on RIGHT
+        self.center_x = timer_area_x
+        self.center_y = h // 2
+        self.radius = min(w - left_panel_width, h) // 2 - 40
         self.ring_width = 15
 
-        # Background ring (dark gray)
+        # Background ring
         self.bg_ring = self.timer_canvas.create_oval(
             self.center_x - self.radius, self.center_y - self.radius,
             self.center_x + self.radius, self.center_y + self.radius,
             outline="#1a1a3a", width=self.ring_width
         )
 
-        # Progress ring (colored arc)
+        # Progress ring
         self.progress_ring = self.timer_canvas.create_arc(
             self.center_x - self.radius, self.center_y - self.radius,
             self.center_x + self.radius, self.center_y + self.radius,
@@ -123,7 +138,7 @@ class SoundBoard:
             style="arc"
         )
 
-        # Timer text (centered on canvas)
+        # Timer text
         self.timer_display = self.timer_canvas.create_text(
             self.center_x, self.center_y,
             text="00:00",
@@ -131,6 +146,58 @@ class SoundBoard:
             fill="#00ff88",
             anchor="center"
         )
+
+        # ===== Hearts on LEFT with SAME formulas =====
+        bar_width = left_panel_width - 50
+        bar_height = max(35, h // 12)
+        bar_spacing = bar_height // 2 + 15
+        start_x = 30
+        start_y = self.center_y - (1.5 * bar_height + bar_spacing)
+        
+        self.heart_groups = []
+        
+        group_labels = ['P', 'A', 'Z']
+        group_colors = ['#0d7377', '#c0392b', '#d4a017']
+        
+        for g in range(3):
+            bar_y = start_y + g * (bar_height + bar_spacing)
+            group_items = {'bg': None, 'label': None, 'hearts': []}
+            
+            # Background bar
+            group_items['bg'] = self.timer_canvas.create_rectangle(
+                start_x, bar_y,
+                start_x + bar_width, bar_y + bar_height,
+                fill=group_colors[g],
+                outline=""
+            )
+            
+            # Label
+            group_items['label'] = self.timer_canvas.create_text(
+                start_x + 15, bar_y + bar_height // 2,
+                text=group_labels[g],
+                font=('Segoe UI', max(12, bar_height // 3), 'bold'),
+                fill="white",
+                anchor="w"
+            )
+            
+            # Hearts - SAME spacing formula
+            for h_idx in range(3):
+                heart_x = start_x + 50 + h_idx * (bar_width // 4)
+                heart_y = bar_y + bar_height // 2
+                
+                toggle_idx = g * 3 + h_idx
+                is_active = self.toggle_states[toggle_idx]
+                
+                heart = self.timer_canvas.create_text(
+                    heart_x, heart_y,
+                    text="♥" if is_active else "♡",
+                    font=('Segoe UI', max(14, bar_height // 2)),
+                    fill="white" if is_active else "#555555",
+                    anchor="center"
+                )
+                group_items['hearts'].append(heart)
+            
+            self.heart_groups.append(group_items)
 
         # Close button
         self.close_btn = tk.Button(
@@ -143,7 +210,7 @@ class SoundBoard:
             cursor="hand2",
             command=self.hide_timer_window
         )
-        self.close_btn.place(x=470, y=5)
+        self.close_btn.place(x=w - 30, y=5)
 
     def hide_timer_window(self):
         self.timer_window.withdraw()
@@ -256,7 +323,7 @@ class SoundBoard:
             if hasattr(self, '_windowed_geometry'):
                 self.timer_window.geometry(self._windowed_geometry)
             else:
-                self.timer_window.geometry("500x500")
+                self.timer_window.geometry("650x500")
 
             self._timer_is_fullscreen = False
             self.resize_timer_canvas()
@@ -277,7 +344,7 @@ class SoundBoard:
         if hasattr(self, '_windowed_geometry'):
             self.timer_window.geometry(self._windowed_geometry)
         else:
-            self.timer_window.geometry("500x500")
+            self.timer_window.geometry("650x500")
         self.resize_timer_canvas()
 
     def resize_timer_canvas(self):
@@ -287,10 +354,14 @@ class SoundBoard:
         
         self.timer_canvas.config(width=w, height=h)
         
-        # Recalculate center and radius
-        self.center_x = w // 2
+        # ===== SPLIT SCREEN: Left for hearts, Right for timer =====
+        left_panel_width = min(280, w // 3)  # Hearts take up to 1/3 of width
+        timer_area_x = left_panel_width + (w - left_panel_width) // 2  # Center of right area
+        
+        # Timer goes on the RIGHT side
+        self.center_x = timer_area_x
         self.center_y = h // 2
-        self.radius = min(w, h) // 2 - 40
+        self.radius = min(w - left_panel_width, h) // 2 - 40
         
         # Update ring positions
         self.timer_canvas.coords(
@@ -304,15 +375,67 @@ class SoundBoard:
             self.center_x + self.radius, self.center_y + self.radius
         )
         
-        # Update text position
+        # Update text position (on the right)
         self.timer_canvas.coords(self.timer_display, self.center_x, self.center_y)
         
         # Update font size based on window size
-        font_size = max(48, min(w, h) // 6)
+        font_size = max(48, min(w - left_panel_width, h) // 6)
         self.timer_canvas.itemconfig(self.timer_display, font=('Segoe UI', font_size, 'bold'))
+        
+        # ===== Hearts stay on the LEFT side =====
+        bar_width = left_panel_width - 50
+        bar_height = max(35, h // 12)
+        bar_spacing = bar_height // 2 + 15
+        start_x = 30
+        start_y = self.center_y - (1.5 * bar_height + bar_spacing)
+        
+        for g in range(3):
+            bar_y = start_y + g * (bar_height + bar_spacing)
+            
+            # Update background bar
+            self.timer_canvas.coords(
+                self.heart_groups[g]['bg'],
+                start_x, bar_y,
+                start_x + bar_width, bar_y + bar_height
+            )
+            
+            # Update label position
+            self.timer_canvas.coords(
+                self.heart_groups[g]['label'],
+                start_x + 15, bar_y + bar_height // 2
+            )
+            self.timer_canvas.itemconfig(
+                self.heart_groups[g]['label'],
+                font=('Segoe UI', max(12, bar_height // 3), 'bold')
+            )
+            
+            # Update hearts position
+            for h_idx in range(3):
+                heart_x = start_x + 50 + h_idx * (bar_width // 4)
+                heart_y = bar_y + bar_height // 2
+                self.timer_canvas.coords(
+                    self.heart_groups[g]['hearts'][h_idx],
+                    heart_x, heart_y
+                )
+                self.timer_canvas.itemconfig(
+                    self.heart_groups[g]['hearts'][h_idx],
+                    font=('Segoe UI', max(14, bar_height // 2))
+                )
+        
+        # Reposition close button (top right of window)
+        if hasattr(self, 'close_btn'):
+            if getattr(self, '_timer_is_fullscreen', False):
+                self.close_btn.place_forget()
+            else:
+                self.close_btn.place(x=w - 30, y=5)
         
         # Redraw progress
         self._update_ring()
+
+    def _on_canvas_resize(self, event):
+        """Update scrollable frame width to match canvas width"""
+        canvas_width = event.width - 20  # Subtract scrollbar width
+        self.canvas.itemconfig(self.canvas_window, width=canvas_width)
 
     def start_drag(self, event):
         self.drag_x = event.x
@@ -498,27 +621,27 @@ class SoundBoard:
             lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         )
 
-        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw", width=620)
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
         self.canvas.configure(yscrollcommand=scrollbar.set)
 
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Update canvas window width when canvas resizes
+        self.canvas.bind('<Configure>', self._on_canvas_resize)
 
-        # Mousewheel scrolling
+        self.root.bind('<Configure>', self.recalculate_word_columns)
         self.canvas.bind_all("<MouseWheel>", self.on_mousewheel)
-
-        # Render word buttons
         self.render_word_buttons()
-
-        # Status bar
-        self.status = tk.Label(self.root, text="Ready", font=('Segoe UI', 10),
-                            bg="#1a1a2e", fg="#6b7280")
-        self.status.pack(pady=(5, 0))
 
         # Hint at bottom
         hint = tk.Label(self.root, text="Press 'C' for Correct  |  Press 'W' for Wrong  |  F11 = Fullscreen",
                        font=('Segoe UI', 9), bg="#1a1a2e", fg="#555577")
         hint.pack(pady=(5, 0))
+
+        self.status = tk.Label(self.root, text="Ready", font=('Segoe UI', 10),
+                              bg="#1a1a2e", fg="#6b7280")
+        self.status.pack(pady=(5, 10))
 
     # === TIMER METHODS ===
     def start_timer(self):
@@ -635,45 +758,114 @@ class SoundBoard:
             empty_msg.pack(pady=40)
             return
 
-        # Grid layout: 3 columns of word buttons
+        # 2 columns windowed, 5 columns fullscreen/maximized
+        if self.root.attributes('-fullscreen') or self.root.wm_state() == 'zoomed':
+            self.num_cols = 5
+        else:
+            self.num_cols = 2
+
+        # Configure all columns to expand equally and fill width
+        for c in range(self.num_cols):
+            self.scrollable_frame.grid_columnconfigure(c, weight=1, uniform="words")
+
         for idx, filepath in enumerate(self.word_files):
             word_name = os.path.splitext(os.path.basename(filepath))[0]
-            row = idx // 3
-            col = idx % 3
+            row = idx // self.num_cols
+            col = idx % self.num_cols
 
-            word_card = tk.Frame(self.scrollable_frame, bg="#313244", padx=10, pady=8)
-            word_card.grid(row=row, column=col, padx=5, pady=4, sticky="ew")
-            self.scrollable_frame.grid_columnconfigure(0, weight=1)
-            self.scrollable_frame.grid_columnconfigure(1, weight=1)
-            self.scrollable_frame.grid_columnconfigure(2, weight=1)
+            # Card fills the cell completely
+            word_card = tk.Frame(self.scrollable_frame, bg="#313244")
+            word_card.grid(row=row, column=col, padx=5, pady=4, sticky="nsew")
 
-            # Word name
-            tk.Label(word_card, text=word_name, font=('Segoe UI', 12, 'bold'),
-                    bg="#313244", fg="#cdd6f4").pack(side=tk.LEFT, padx=(0, 10))
+            # Inner frame with padding
+            inner = tk.Frame(word_card, bg="#313244")
+            inner.pack(fill=tk.BOTH, expand=True, padx=10, pady=8)
+
+            # Word name - left aligned, fills space
+            name_label = tk.Label(inner, text=word_name, font=('Segoe UI', 12, 'bold'),
+                    bg="#313244", fg="#cdd6f4", anchor="w")
+            name_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
             # Play button
-            play_btn = tk.Button(word_card, text="▶", font=('Segoe UI', 11, 'bold'),
+            play_btn = tk.Button(inner, text="▶", font=('Segoe UI', 11, 'bold'),
                                 bg="#89b4fa", fg="#1e1e2e", relief=tk.FLAT,
                                 width=3, cursor="hand2",
                                 command=lambda f=filepath, n=word_name: self.play_word(f, n))
-            play_btn.pack(side=tk.RIGHT)
+            play_btn.pack(side=tk.RIGHT, padx=(10, 0))
+
+    def recalculate_word_columns(self, event=None):
+        """Recalculate columns when window is resized"""
+        # Wait 100ms for window to finish resizing, then check
+        if hasattr(self, '_resize_after_id'):
+            self.root.after_cancel(self._resize_after_id)
+        self._resize_after_id = self.root.after(500, self._do_recalculate_columns)
+    
+    def _do_recalculate_columns(self):
+        """Actually recalculate and re-render word columns"""
+        if not self.word_files:
+            return
+        
+        self.root.update_idletasks()
+        window_width = self.root.winfo_width()
+        
+        # 2 columns windowed, 5 columns fullscreen/maximized/wide
+        is_wide = (self.root.attributes('-fullscreen') or 
+                   self.root.wm_state() == 'zoomed' or
+                   window_width > 1200)
+        
+        new_num_cols = 5 if is_wide else 2
+
+        # Only re-render if column count actually changed
+        if new_num_cols != self.num_cols:
+            self.num_cols = new_num_cols
+            # Clear existing widgets
+            for widget in self.scrollable_frame.winfo_children():
+                widget.destroy()
+            # Re-render with new column count
+            self.render_word_buttons()
 
     def play_word(self, filepath, word_name):
         """Play a word audio file"""
         self.status.config(text=f"Playing: {word_name}", fg="#89b4fa")
         self.play_audio_file(filepath)
 
+    def update_hearts_display(self):
+        """Update hearts on timer window to match toggle states"""
+        if not hasattr(self, 'heart_groups'):
+            return
+        
+        for g in range(3):  # 3 groups (P, A, Z)
+            active_count = sum(self.heart_states[g])
+            
+            for h in range(3):  # 3 hearts per group
+                # Fill from left to right based on count
+                is_active = h < active_count
+                heart = self.heart_groups[g]['hearts'][h]
+                
+                self.timer_canvas.itemconfig(
+                    heart,
+                    text="♥" if is_active else "♡",
+                    fill="white" if is_active else "#555555"
+                )
+
     def toggle(self, idx):
-        """Toggle a button between active and inactive"""
-        self.toggle_states[idx] = not self.toggle_states[idx]
-        is_active = self.toggle_states[idx]
+        """"Toggle individual heart on/off"""
+        group = idx % 3        # 0=P, 1=A, 2=Z
+        position = idx // 3    # 0=left, 1=middle, 2=right
+        
+        # Flip this specific heart
+        self.heart_states[group][position] = not self.heart_states[group][position]
+        
+        # Update button color for this specific button
+        is_active = self.heart_states[group][position]
 
         btn = self.toggle_buttons[idx]
-        letter = self.toggle_labels[idx]
         if is_active:
             btn.config(bg=self.toggle_colors[idx]['active'], fg="white")
         else:
             btn.config(bg=self.toggle_colors[idx]['inactive'], fg="black")
+        
+        self.update_hearts_display()
 
     def play_audio_file(self, filepath):
         """Play any audio file using multiple methods"""
@@ -743,6 +935,11 @@ class SoundBoard:
     def toggle_fullscreen(self):
         is_full = self.root.attributes('-fullscreen')
         self.root.attributes('-fullscreen', not is_full)
+        self.root.after(200, self._do_recalculate_columns)
+
+    def _on_window_mapped(self, event=None):
+        """Called when window is mapped/maximized/restored"""
+        self.root.after(100, self._do_recalculate_columns)
 
     def on_mousewheel(self, event):
         self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
