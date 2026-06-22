@@ -43,14 +43,14 @@ class SoundBoard:
             {'active': '#d4a017', 'inactive': '#5c4a1a'},  # Z - Gold
         ] * 3
 
-        self.toggle_labels = ['P', 'A', 'Z'] * 3
+        self.group_labels = ['P', 'A', 'Z'] * 3
 
         self.heart_states = [
             [True, True, True],   # P group hearts [left, middle, right]
             [True, True, True],   # A group
             [True, True, True]    # Z group
         ]
-
+        self.group_names = ['POSEIDON','ATHENA','ZEUS']
         self.group_colors = ['#0d7377', '#c0392b', '#d4a017']
         self.group_gray = '#3a3a4a'
 
@@ -111,7 +111,6 @@ class SoundBoard:
         )
         self.timer_canvas.pack(fill=tk.BOTH, expand=True)
 
-        # ===== USE SAME FORMULAS AS resize_timer_canvas() =====
         w, h = 650, 500  # Initial window size
         
         # Split screen: left panel for hearts, right for timer
@@ -158,8 +157,6 @@ class SoundBoard:
         
         self.heart_groups = []
         
-        group_labels = ['P', 'A', 'Z']
-        
         for g in range(3):
             bar_y = start_y + g * (bar_height + bar_spacing)
             group_items = {'bg': None, 'label': None, 'hearts': []}
@@ -175,7 +172,7 @@ class SoundBoard:
             # Label
             group_items['label'] = self.timer_canvas.create_text(
                 start_x + 15, bar_y + bar_height // 2,
-                text=group_labels[g],
+                text=self.group_labels[g],
                 font=('Segoe UI', max(12, bar_height // 3), 'bold'),
                 fill="white",
                 anchor="w"
@@ -199,6 +196,23 @@ class SoundBoard:
                 group_items['hearts'].append(heart)
             
             self.heart_groups.append(group_items)
+
+        # ===== WINNER SCREEN (hidden by default) =====
+        self.winner_screen = self.timer_canvas.create_rectangle(
+            0, 0, 650, 500,
+            fill="",  # Start transparent
+            outline="",
+            state="hidden"  # Hidden initially
+        )
+        
+        self.winner_text = self.timer_canvas.create_text(
+            325, 250,  # Center of 650x500
+            text="",
+            font=('Segoe UI', 64, 'bold'),
+            fill="white",
+            anchor="center",
+            state="hidden"
+        )
 
         # Close button
         self.close_btn = tk.Button(
@@ -424,6 +438,13 @@ class SoundBoard:
                     font=('Segoe UI', max(14, bar_height // 2))
                 )
         
+        winner_state = self.timer_canvas.itemcget(self.winner_screen, "state")
+        if winner_state != "hidden":
+            self.timer_canvas.coords(self.winner_screen, 0, 0, w, h)
+            self.timer_canvas.coords(self.winner_text, w // 2, h // 2)
+            font_size = max(36, min(w, h) // 8)
+            self.timer_canvas.itemconfig(self.winner_text, font=('Segoe UI', font_size, 'bold'))
+
         # Reposition close button (top right of window)
         if hasattr(self, 'close_btn'):
             if getattr(self, '_timer_is_fullscreen', False):
@@ -585,7 +606,7 @@ class SoundBoard:
 
         self.toggle_buttons = []
         for i in range(9):
-            btn = tk.Button(toggle_frame, text=self.toggle_labels[i], font=('Segoe UI', 14, 'bold'),
+            btn = tk.Button(toggle_frame, text=self.group_labels[i], font=('Segoe UI', 14, 'bold'),
                            width=3, height=1,
                            bg=self.toggle_colors[i]['active'],
                            fg="white",
@@ -855,7 +876,7 @@ class SoundBoard:
             active_count = sum(self.heart_states[g])
             if active_count == 0:
                 bar_color = self.group_gray
-                label_color = 'black'
+                label_color = '#555555'
             else:
                 bar_color = self.group_colors[g]
                 label_color = 'white'
@@ -892,6 +913,48 @@ class SoundBoard:
             btn.config(bg=self.toggle_colors[idx]['inactive'], fg="black")
         
         self.update_hearts_display()
+        self.check_winner()
+
+    def check_winner(self):
+        """Check if only one group has hearts remaining. If so, show winner screen."""
+        active_counts = [sum(group) for group in self.heart_states]
+        active_groups = [i for i, count in enumerate(active_counts) if count > 0]
+        
+        if len(active_groups) == 1:
+            # Only one group left - show winner!
+            winner = active_groups[0]
+            self.show_winner(winner)
+        else:
+            # Multiple or no groups active - hide winner screen
+            self.hide_winner()
+
+    def show_winner(self, winner_idx):
+        """Display full-screen winner overlay"""
+        w = self.timer_window.winfo_width()
+        h = self.timer_window.winfo_height()
+        
+        # Update winner screen to cover entire canvas
+        self.timer_canvas.coords(self.winner_screen, 0, 0, w, h)
+        self.timer_canvas.itemconfig(self.winner_screen, fill=self.group_colors[winner_idx])
+        self.timer_canvas.itemconfig(self.winner_screen, state="normal")
+        
+        # Update and center winner text
+        self.timer_canvas.coords(self.winner_text, w // 2, h // 2)
+        self.timer_canvas.itemconfig(
+            self.winner_text,
+            text=f"{self.group_names[winner_idx]} WINS!",
+            fill="white",
+            state="normal"
+        )
+        
+        # Scale font size based on window
+        font_size = max(36, min(w, h) // 8)
+        self.timer_canvas.itemconfig(self.winner_text, font=('Segoe UI', font_size, 'bold'))
+
+    def hide_winner(self):
+        """Hide winner screen overlay"""
+        self.timer_canvas.itemconfig(self.winner_screen, state="hidden")
+        self.timer_canvas.itemconfig(self.winner_text, state="hidden")
 
     def play_audio_file(self, filepath):
         """Play any audio file using multiple methods"""
