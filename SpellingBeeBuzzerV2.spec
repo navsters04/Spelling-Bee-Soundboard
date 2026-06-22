@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['spelling_bee_buzzer_with_words.py'],
+    ['spelling_bee_buzzer.py'],
     pathex=[],
     binaries=[],
     datas=[('buzzer', 'buzzer')],
