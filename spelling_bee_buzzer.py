@@ -293,8 +293,6 @@ class SoundBoard:
                 mon_x = wx
                 mon_y = wy
 
-            # Turn off borderless, then set geometry to fill the monitor
-            self.timer_window.overrideredirect(False)
             self.timer_window.update_idletasks()
 
             # Set position first, then size (order matters for multi-monitor)
@@ -304,7 +302,6 @@ class SoundBoard:
             self.timer_window.update_idletasks()
 
             # Use Windows API to maximize properly instead of -fullscreen
-            # This respects the monitor position
             self._maximize_window()
 
             self._timer_is_fullscreen = True
@@ -313,7 +310,6 @@ class SoundBoard:
             # Show close button when exiting fullscreen
             if hasattr(self, 'close_btn'):
                 self.close_btn.place(x=470, y=5)
-
 
             # Restore windowed state
             self._restore_window()
@@ -335,7 +331,6 @@ class SoundBoard:
     def _restore_window(self):
         hwnd = ctypes.windll.user32.GetForegroundWindow()
         ctypes.windll.user32.ShowWindow(hwnd, 9)  
-
 
     def exit_timer_fullscreen(self):
         self.timer_window.attributes('-fullscreen', False)
