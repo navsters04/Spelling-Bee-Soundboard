@@ -26,6 +26,7 @@ class SoundBoard:
         self.words_dir = os.path.join(self.app_dir, "words")
         self.correct_path = os.path.join(self.buzzer_dir, "correct.mp3")
         self.wrong_path = os.path.join(self.buzzer_dir, "wrong.mp3")
+        self.warning_path = os.path.join(self.buzzer_dir, "warning.mp3")
 
         # Check buzzer files
         self.check_buzzer_files()
@@ -75,6 +76,14 @@ class SoundBoard:
         self.root.bind('<Escape>', lambda e: self.root.attributes('-fullscreen', False))
         self.root.bind('<Map>', self._on_window_mapped)
 
+        self.timer_dark_mode = True
+        self.timer_bg_dark = "#0a0a1a"
+        self.timer_bg_light = "#f0f0f5"
+        self.timer_ring_bg_dark = "#1a1a3a"
+        self.timer_ring_bg_light = "#d0d0e0"
+        self.timer_text_dark = "#00ff88"
+        self.timer_text_light = "#10b981"
+
         # Open timer display window
         self.open_timer_window()
 
@@ -98,6 +107,7 @@ class SoundBoard:
 
         self.timer_window.bind('<Button-1>', self.start_drag)
         self.timer_window.bind('<B1-Motion>', self.on_drag)
+        self.timer_window.bind('<F10>', lambda e: self.toggle_timer_theme())
         self.timer_window.bind('<F11>', lambda e: self.toggle_timer_fullscreen())
         self.timer_window.bind('<Escape>', lambda e: self.exit_timer_fullscreen())
         self.timer_window.bind('<Button-3>', self.show_timer_menu)
@@ -237,6 +247,42 @@ class SoundBoard:
         self.timer_window_visible = True
         self.toggle_timer_btn.config(text="HIDE TIMER")
 
+    def toggle_timer_theme(self):
+        """Toggle between dark and light mode for timer window"""
+        self.timer_dark_mode = not self.timer_dark_mode
+        
+        if self.timer_dark_mode:
+            bg = self.timer_bg_dark
+            ring_bg = self.timer_ring_bg_dark
+            text_color = self.timer_text_dark
+            close_fg = "#666"
+        else:
+            bg = self.timer_bg_light
+            ring_bg = self.timer_ring_bg_light
+            text_color = self.timer_text_light
+            close_fg = "#333"
+        
+        # Update canvas background
+        self.timer_canvas.config(bg=bg)
+        
+        # Update background ring
+        self.timer_canvas.itemconfig(self.bg_ring, outline=ring_bg)
+        
+        # Update timer text color (only if timer not running)
+        if not self.timer_running:
+            self.timer_canvas.itemconfig(self.timer_display, fill=text_color)
+            self.timer_canvas.itemconfig(self.progress_ring, outline=text_color)
+        
+        # Update close button
+        self.close_btn.config(bg=bg, fg=close_fg)
+        
+        # Update heart bar backgrounds (keep group colors, just update if gray)
+        for g in range(3):
+            active_count = sum(self.heart_states[g])
+            if active_count == 0:
+                bar_color = '#b0b0c0' if not self.timer_dark_mode else self.group_gray
+                self.timer_canvas.itemconfig(self.heart_groups[g]['bg'], fill=bar_color)
+
     def toggle_timer_visibility(self):
         if self.timer_window_visible:
             self.hide_timer_window()
@@ -360,7 +406,7 @@ class SoundBoard:
         self.timer_window.update_idletasks()
         w = self.timer_window.winfo_width()
         h = self.timer_window.winfo_height()
-        
+
         self.timer_canvas.config(width=w, height=h)
         
         # ===== SPLIT SCREEN: Left for hearts, Right for timer =====
@@ -475,6 +521,8 @@ class SoundBoard:
         menu.add_command(label="Change Color...", command=self.change_timer_color)
         menu.add_separator()
         menu.add_command(label="Hide Timer Window", command=self.hide_timer_window)
+        menu.add_separator()
+        menu.add_command(label="Toggle Light/Dark Mode (F10)", command=self.toggle_timer_theme)
         menu.post(event.x_root, event.y_root)
 
     def change_timer_color(self):
@@ -538,7 +586,7 @@ class SoundBoard:
         self.min_entry = tk.Entry(input_frame, width=4, font=('Segoe UI', 14),
                                   bg="#313244", fg="#f0f0f0", relief=tk.FLAT,
                                   justify=tk.CENTER, insertbackground="#f0f0f0")
-        self.min_entry.insert(0, "2")
+        self.min_entry.insert(0, "0")
         self.min_entry.pack(side=tk.LEFT)
 
         tk.Label(input_frame, text=":", font=('Segoe UI', 14),
@@ -547,7 +595,7 @@ class SoundBoard:
         self.sec_entry = tk.Entry(input_frame, width=4, font=('Segoe UI', 14),
                                   bg="#313244", fg="#f0f0f0", relief=tk.FLAT,
                                   justify=tk.CENTER, insertbackground="#f0f0f0")
-        self.sec_entry.insert(0, "00")
+        self.sec_entry.insert(0, "45")
         self.sec_entry.pack(side=tk.LEFT)
 
         # Timer control buttons
@@ -714,13 +762,22 @@ class SoundBoard:
         self.root.after(0, lambda: self.timer_canvas.itemconfig(self.timer_display, text=time_str))
         self.root.after(0, self._update_ring)
 
-        # Color changes — now using itemconfig for canvas
+        # Play warning sound at exactly 10 seconds
+        if self.timer_seconds == 10:
+            self.root.after(0, self.play_warning)
+
+        # Color changes
         if self.timer_seconds <= 10:
             self.root.after(0, lambda: self.timer_canvas.itemconfig(self.timer_display, fill="#ef4444"))
             self.root.after(0, lambda: self.timer_canvas.itemconfig(self.progress_ring, outline="#ef4444"))
         elif self.timer_seconds <= 30:
             self.root.after(0, lambda: self.timer_canvas.itemconfig(self.timer_display, fill="#d4a017"))
             self.root.after(0, lambda: self.timer_canvas.itemconfig(self.progress_ring, outline="#d4a017"))
+        else:
+            # Only use normal theme color when NOT in warning state
+            normal_color = self.timer_text_dark if self.timer_dark_mode else self.timer_text_light
+            self.root.after(0, lambda: self.timer_canvas.itemconfig(self.timer_display, fill=normal_color))
+            self.root.after(0, lambda: self.timer_canvas.itemconfig(self.progress_ring, outline=normal_color))
 
     def _update_ring(self):
         """Update the circular progress ring based on remaining time"""
@@ -731,6 +788,12 @@ class SoundBoard:
         
         extent = progress * 360
         self.timer_canvas.itemconfig(self.progress_ring, extent=extent)
+
+    def play_warning(self):
+        """Play warning sound when timer hits 10 seconds"""
+        if os.path.exists(self.warning_path):
+            self.play_audio_file(self.warning_path)
+            self.status.config(text="Warning: 10 seconds left!", fg="#d4a017")
 
     def timer_finished(self):
         self.timer_running = False
@@ -760,9 +823,10 @@ class SoundBoard:
         self.timer_seconds = 0
         self.timer_total = 0
         self._reset_ui_state()
-        
-        self.timer_canvas.itemconfig(self.timer_display, text="00:00", fill="#00ff88")
-        self.timer_canvas.itemconfig(self.progress_ring, outline="#00ff88", extent=0)
+
+        normal_color = self.timer_text_dark if self.timer_dark_mode else self.timer_text_light
+        self.timer_canvas.itemconfig(self.timer_display, text="00:00", fill=normal_color)
+        self.timer_canvas.itemconfig(self.progress_ring, outline=normal_color, extent=0)
         
         self.status.config(text="Timer reset", fg="#6b7280")
 
@@ -872,23 +936,21 @@ class SoundBoard:
         if not hasattr(self, 'heart_groups'):
             return
         
-        for g in range(3):  # 3 groups (P, A, Z)
+        for g in range(3):
             active_count = sum(self.heart_states[g])
             if active_count == 0:
-                bar_color = self.group_gray
-                label_color = '#555555'
+                bar_color = '#b0b0c0' if not self.timer_dark_mode else self.group_gray
+                label_color = '#888899' if not self.timer_dark_mode else '#555555'
             else:
                 bar_color = self.group_colors[g]
-                label_color = 'white'
+                label_color = '#333333' if not self.timer_dark_mode else 'white'
             
             self.timer_canvas.itemconfig(self.heart_groups[g]['bg'], fill=bar_color)
             self.timer_canvas.itemconfig(self.heart_groups[g]['label'], fill=label_color)
             
-            for h in range(3):  # 3 hearts per group
-                # Fill from left to right based on count
+            for h in range(3):
                 is_active = h < active_count
                 heart = self.heart_groups[g]['hearts'][h]
-                
                 self.timer_canvas.itemconfig(
                     heart,
                     text="♥" if is_active else "♡",
