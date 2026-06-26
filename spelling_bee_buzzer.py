@@ -783,7 +783,7 @@ class SoundBoard:
 
         # 2 columns windowed, 5 columns fullscreen/maximized
         if self.root.attributes('-fullscreen') or self.root.wm_state() == 'zoomed':
-            self.num_cols = 5
+            self.num_cols = 3
         else:
             self.num_cols = 2
 
@@ -840,7 +840,7 @@ class SoundBoard:
                    self.root.wm_state() == 'zoomed' or
                    window_width > 1200)
         
-        new_num_cols = 5 if is_wide else 2
+        new_num_cols = 3 if is_wide else 2
 
         # Only re-render if column count actually changed
         if new_num_cols != self.num_cols:
