@@ -742,6 +742,9 @@ class SoundBoard:
 
         self.status.config(text="Timer running...", fg="#10b981")
 
+        if os.path.exists(self.warning_path):
+            self.play_audio_file(self.warning_path)
+
         self.timer_thread = threading.Thread(target=self._timer_loop, daemon=True)
         self.timer_thread.start()
 
